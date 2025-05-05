@@ -325,8 +325,9 @@ class Stem:
     def force_silence(self, silence):
         if len(silence) != 0:
             for i in range(len(silence)):
-                
-                interval = librosa_test.times_to_samples(silence[i], self.sr)
+                silent_downbeats = (self.downbeats[int(silence[i][0])], self.downbeats[int(silence[i][1])])
+                #print(silent_downbeats)
+                interval = librosa_test.times_to_samples(silent_downbeats, self.sr)
                 #print(interval)
                 self.y[interval[0]:interval[1]] = 0
                 #print(self.y[interval[0]:interval[1]], self.name)
@@ -427,6 +428,7 @@ class Stem:
             original_duration = self.downbeats[i+1] - self.downbeats[i]
             target_duration = desired_downbeats[i+1] - desired_downbeats[i]
             rate = original_duration/target_duration
+            
             stretched = librosa.effects.time_stretch(segment, rate = rate)
             new_audio_segments.append(stretched)
             new_downbeats.append(desired_downbeats[i+1])
@@ -440,11 +442,14 @@ class Stem:
         #print(original_duration, target_duration, rate)
         if original_duration<=0 or target_duration<=0:
             new_audio_segments.append(segment)
+        elif np.around(original_duration/target_duration,2) == 0:
+            new_audio_segments.append(segment)
         else:
-            rate = original_duration/target_duration
             #print(end_time)
+            rate = original_duration/target_duration
             #print(self.downbeats, desired_downbeats)
             #print(original_duration, target_duration, rate)
+            print(rate)
             stretched = librosa.effects.time_stretch(segment, rate = rate)
             new_audio_segments.append(stretched)
 
@@ -486,7 +491,7 @@ class Mashup:
         self.bass = copy.deepcopy(bass)
         self.drums = copy.deepcopy(drums)
         self.stems = [self.vocals, self.other, self.bass, self.drums]
-        self.section = 1
+        self.section = 2
         self.sr = vocals.sr
         self.key = self.vocals.key
 
@@ -645,17 +650,17 @@ class Mashup:
         sf.write("bass.wav", self.bass.y, self.sr, subtype='PCM_16')
         sf.write("drums.wav", self.drums.y, self.sr, subtype='PCM_16')
         vocal_audio = AudioSegment.from_wav("vocals.wav")
-        vocal_audio -= 5
+        vocal_audio -= 4
         other_audio = AudioSegment.from_wav("other.wav")
-        other_audio += 5
+        other_audio += 2
         bass_audio = AudioSegment.from_wav("bass.wav")
         bass_audio += 5
         drums_audio = AudioSegment.from_wav("drums.wav")
 
-        os.remove("vocals.wav")
-        os.remove("other.wav")
-        os.remove("bass.wav")
-        os.remove("drums.wav")
+        #os.remove("vocals.wav")
+        #os.remove("other.wav")
+        #os.remove("bass.wav")
+        #os.remove("drums.wav")
 
         vocal_audio = vocal_audio.overlay(other_audio)
         vocal_audio = vocal_audio.overlay(bass_audio)

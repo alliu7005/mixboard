@@ -1,8 +1,12 @@
 from song_struct import Stem, Song_Struct
 from models import db, SongModel, StemModel, stem_from_orm, song_from_orm, GraphModel, graph_from_orm
 import librosa
+from librosa_test import chord_similarity, shift_pitch, extract_chords, chord_matrix
 import numpy as np
 from scipy.spatial.distance import cosine
+from sklearn.neighbors import NearestNeighbors
+
+THRESHOLD = 0.8
 
 def extract_stem_features(stem:Stem):
     #print(np.array(stem.mfcc).shape)
@@ -11,14 +15,20 @@ def extract_stem_features(stem:Stem):
     tempo=stem.tempo
     onset_env = librosa.onset.onset_strength(y=stem.y, sr=stem.sr)
     onset_density=len(librosa.onset.onset_detect(onset_envelope=onset_env,sr=stem.sr))/librosa.get_duration(y=stem.y,sr=stem.sr)
-
+    beats = stem.beats
+    y = stem.y
+    sr = stem.sr
+    key = stem.key
     #print(mfcc.shape, chroma.shape)
 
     return {
         "tempo":tempo,
         "chroma":chroma,
         "mfcc":mfcc,
-        "onset_density":onset_density
+        "onset_density":onset_density,
+        "y":y,
+        "sr":sr,
+        "key":key
     }
 
 def cosine_similarity(vec1, vec2):
@@ -33,11 +43,23 @@ def vocals_other_compat(vocals:Stem,other:Stem):
 
     mfcc_cosine = 1 - cosine(np.array(vocals_features["mfcc"]), np.array(other_features["mfcc"]),)
 
-    chroma_cosine = 1 - cosine(np.array(vocals_features["chroma"]),np.array(other_features["chroma"]),)
+    y = shift_pitch(other.init_song.orig_y, other_features["sr"], other_features["key"], vocals_features["key"])
+
+    chord_score = max(chord_similarity(vocals.init_song.orig_y, y, vocals_features["sr"]),0)
+
+    chord_score = sharpen(chord_score)
+
+    #print("VOCALS_OTHER")
+    #print("chord score", vocals.init_song.name, other.init_song.name, chord_score)
+    #print("mfcc", vocals.init_song.name, other.init_song.name, mfcc_cosine)
+    #print("chroma", vocals.init_song.name, other.init_song.name, chroma_cosine)
+    #print("tempo", vocals.init_song.name, other.init_song.name, tempo_score)
 
     weights = {"w1": 0.7, "w2": 0.1, "w3": 0.2}
 
-    compat = (weights["w1"] * tempo_score + weights["w2"] * mfcc_cosine + weights["w3"] * chroma_cosine)
+    compat = (weights["w1"] * tempo_score + weights["w2"] * mfcc_cosine + weights["w3"] * chord_score)
+
+    #print(compat)
 
     return compat
 
@@ -50,11 +72,22 @@ def other_bass_compat(bass:Stem,other:Stem):
 
     mfcc_cosine = 1 - cosine(np.array(other_features["mfcc"]), np.array(bass_features["mfcc"]))
 
-    chroma_cosine = 1 - cosine(np.array(other_features["chroma"]),np.array(bass_features["chroma"]))
+    y = shift_pitch(bass.init_song.orig_y, bass_features["sr"], bass_features["key"], other_features["key"])
 
-    weights = {"w1": 0.7, "w2": 0.1, "w3": 0.2}
+    chord_score = max(chord_similarity(other.init_song.orig_y, y, other_features["sr"]),0)
+    chord_score = sharpen(chord_score)
 
-    compat = (weights["w1"] * tempo_score + weights["w2"] * mfcc_cosine + weights["w3"] * chroma_cosine)
+    #print("OTHER_BASS")
+    #print("chord score", bass.init_song.name, other.init_song.name, chord_score)
+    #print("mfcc", bass.init_song.name, other.init_song.name, mfcc_cosine)
+    #print("chroma", bass.init_song.name, other.init_song.name, chroma_cosine)
+    #print("tempo", bass.init_song.name, other.init_song.name, tempo_score)
+
+    weights = {"w1": 0.7, "w2": 0.1, "w3":0.2}
+
+    compat = (weights["w1"] * tempo_score + weights["w2"] * mfcc_cosine + weights["w3"] * chord_score)
+
+    #print(compat)
 
     return compat
 
@@ -76,21 +109,27 @@ def vocals_drums_compat(vocals:Stem,drums:Stem):
     return compat
 
 def init_graph(dbsession):
-    songs = dbsession.query(SongModel).all()
-    songs_extracted = []
-    for song in songs:
-        song_ext = song_from_orm(song)
-        songs_extracted.append(song_ext)
+    songs_orm = dbsession.query(SongModel).all()
+    songs = [song_from_orm(s) for s in songs_orm]
+
     
-    vocal_other_graph = []
-    other_bass_graph = []
-    vocal_drums_graph = []
-    for song1 in songs_extracted:
-        for song2 in songs_extracted:
+    vocal_other_graph = [[]]
+    other_bass_graph = [[]]
+    vocal_drums_graph = [[]]
+
+
+    for song1 in songs:
+        for song2 in songs:
             if song1.name != song2.name:
-                vocal_other_graph.append((song1.name, song2.name, vocals_other_compat(song1.vocals, song2.other)))
-                other_bass_graph.append((song1.name, song2.name, other_bass_compat(song1.other, song2.bass)))
-                vocal_drums_graph.append((song1.name, song2.name, vocals_drums_compat(song1.vocals, song2.drums)))
+                vo = vocals_other_compat(song1.vocals, song2.other)
+                if vo > THRESHOLD:
+                    vocal_other_graph[0].append((song1.name, song2.name, vo))
+                ob = other_bass_compat(song1.other, song2.bass)
+                if ob > THRESHOLD:
+                    other_bass_graph[0].append((song1.name, song2.name, ob))
+                vd = vocals_drums_compat(song1.vocals, song2.drums)
+                if vd > THRESHOLD:
+                    vocal_drums_graph[0].append((song1.name, song2.name, vd))
     
     print(vocal_other_graph)
     print(other_bass_graph)
@@ -125,12 +164,29 @@ def add_song_to_graph(dbsession, song):
 
     for song2 in songs_extracted:
         if song.name != song2.name:
-            vocal_other_graph.append((song.name, song2.name, vocals_other_compat(song.vocals, song2.other)))
-            other_bass_graph.append((song.name, song2.name, other_bass_compat(song.other, song2.bass)))
-            vocal_drums_graph.append((song.name, song2.name, vocals_drums_compat(song.vocals, song2.drums)))
-            vocal_other_graph.append((song2.name, song.name, vocals_other_compat(song2.vocals, song.other)))
-            other_bass_graph.append((song2.name, song.name, other_bass_compat(song2.other, song.bass)))
-            vocal_drums_graph.append((song2.name, song.name, vocals_drums_compat(song2.vocals, song.drums)))
+            vo = vocals_other_compat(song.vocals, song2.other)
+            
+            if vo > THRESHOLD:
+                vocal_other_graph.append((song.name, song2.name, vo))
+            vo2 = vocals_other_compat(song2.vocals, song.other)
+            if vo2 > THRESHOLD:
+                vocal_other_graph.append((song2.name, song.name, vo2))
+
+            ob = other_bass_compat(song.other, song2.bass)
+            
+            if ob > THRESHOLD:
+                other_bass_graph.append((song.name, song2.name, ob))
+            ob2 = other_bass_compat(song2.other, song.bass)
+            if ob2 > THRESHOLD:
+                other_bass_graph.append((song2.name, song.name, ob2))
+
+            vd = vocals_drums_compat(song.vocals, song2.drums)
+            
+            if vd > THRESHOLD:
+                vocal_drums_graph.append((song.name, song2.name, vd))
+            vd2 = vocals_drums_compat(song2.vocals, song.drums)
+            if vd2 > THRESHOLD:
+                vocal_drums_graph.append((song2.name, song.name, vd2))
 
     print(vocal_other_graph)
     print(other_bass_graph)
@@ -151,6 +207,5 @@ def add_song_to_graph(dbsession, song):
         synchronize_session=False)
     dbsession.commit()
 
-
-    
-        
+def sharpen(x, alpha=3):
+    return (x**alpha) / (x**alpha + (1-x)**alpha)

@@ -61,9 +61,9 @@ def index():
         other_stem = stem_from_orm(other_orm)
         drums_orm = StemModel.query.filter_by(songname=drums_name,name="drums").all()[0]
         drums_stem = stem_from_orm(drums_orm)
-        print(graph_from_orm(other_bass), other_name, song.name)
+        #print(graph_from_orm(other_bass), other_name, song.name)
 
-        other_bass_graph = [t for t in graph_from_orm(other_bass) if t[0]==other_name and t[1]!=other_name and t[1]!=song.name]
+        other_bass_graph = [t for t in graph_from_orm(other_bass) if t[0]==other_name and t[1]!=other_name]
 
         other_bass_graph = sorted(other_bass_graph, key=lambda x: x[2], reverse=True)
 
@@ -71,9 +71,6 @@ def index():
         bass_orm = StemModel.query.filter_by(songname=bass_name,name="bass").all()[0]
         bass_stem = stem_from_orm(bass_orm)
         print(stem.init_song.name, other_stem.init_song.name, bass_stem.init_song.name, drums_stem.init_song.name)
-
-
-        print(vocal_other_graph)
 
         mashup = Mashup(song, stem, other_stem, bass_stem, drums_stem)
 
@@ -90,9 +87,8 @@ def index():
         return redirect(url_for('res'))
         
     else:
+        init_graph(db.session)
         orm_stems = StemModel.query.filter_by(name="vocals").all()
-        #stems = [stem_from_orm(s) for s in orm_stems]
-        #init_graph(db.session)
         return render_template('index.html', stems=orm_stems)
 
 @app.route('/res', methods = ['POST', 'GET'])
@@ -151,8 +147,9 @@ def load():
         drums_dict = drums.to_dict()
         stems = [vocals_dict, other_dict, bass_dict, drums_dict]
         store_song_from_dict(song_dict, stems, db.session)
-        add_song_to_graph(db.session,song)
         #init_graph(db.session)
+        add_song_to_graph(db.session,song)
+        
     
     return render_template('load.html')
 

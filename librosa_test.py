@@ -5,6 +5,13 @@ import librosa.display
 from pydub import AudioSegment
 import numpy as np
 from BeatNet.BeatNet import BeatNet
+from madmom.features.chords import DeepChromaChordRecognitionProcessor, majmin_targets_to_chord_labels
+from madmom.audio.chroma import DeepChromaProcessor
+from madmom.evaluation.chords import encode as encode_chords, merge_chords, reduce_to_triads
+import os
+import soundfile as sf
+from scipy.spatial.distance import cdist
+
 
 #display chromagram
 
@@ -422,3 +429,80 @@ def find_key(y,sr):
 def shift_pitch(y, sr, key_y, key2):
     n_steps = key2 - key_y
     return librosa.effects.pitch_shift(y=y, sr=sr, n_steps=n_steps)
+
+def extract_chords(y, sr, fps=10):
+    sf.write("temp1.wav",y,sr)
+    fps = fps
+    #print(fps)
+
+    dcp = DeepChromaProcessor(fps=fps)
+    decoder = DeepChromaChordRecognitionProcessor(fps=fps)
+    chroma = dcp("temp1.wav")
+
+    #hop_len = dcp.processors[1].hop_size
+
+    targets = decoder(chroma)
+
+    ann = encode_chords(targets)
+    ann = merge_chords(ann)
+    reduced = reduce_to_triads(ann["chord"])
+
+
+    out = np.empty(len(reduced), dtype=ann.dtype)
+    out["start"] = ann["start"] 
+    out["end"] = ann["end"] 
+    out["chord"] = reduced
+    return out
+
+def detect_closest_beat(timestamp, beats):
+
+    out = []
+    #print(beats)
+    #print(len(timestamp))
+    for i in range(len(timestamp)):
+        
+        if i == 0:
+            out.append(0)
+        elif i == len(timestamp)-1:
+            l = np.argwhere(beats < timestamp[i])[-1][0]
+            out.append(l)
+        else:
+            #print(i)
+            ge = np.argwhere(beats >= timestamp[i])[0][0]
+            l = np.argwhere(beats < timestamp[i])[-1][0]
+            #print(timestamp[i], beats[ge], beats[l])
+            diff1 = abs(timestamp[i] - beats[ge])
+            diff2 = abs(timestamp[i] - beats[l])
+
+            if diff1 < diff2:
+                out.append(ge)
+            else:
+                out.append(l)
+
+    return np.array(out)
+
+def chord_matrix(ann, fps=10):
+    T = int(np.ceil(ann['end'][-1] * fps))
+    M = np.zeros((12,T), dtype=float)
+    for segment in ann:
+        r = int(segment["chord"]["root"])
+        t0 = int(segment["start"] * fps)
+        t1 = int(segment["end"] * fps)
+        M[r, t0:t1] = 1.0
+    return M
+
+def chord_similarity(y1, y2, sr, fps=10):
+    ann = extract_chords(y1, sr, fps=fps)
+    ann2 = extract_chords(y2, sr, fps=fps)
+    M1 = chord_matrix(ann, fps=fps)
+    M2 = chord_matrix(ann2, fps=fps)
+
+    F1 = M1.T
+    F2 = M2.T
+
+    C = cdist(F1, F2, metric="euclidean")
+
+    D, wp = librosa.sequence.dtw(C=C, backtrack=True)
+    dist = D[-1,-1]
+    sim = 1.0 - dist / len(wp)
+    return sim
