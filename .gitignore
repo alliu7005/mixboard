@@ -2,3 +2,9 @@ instance/
 flask_session/
 .wav
 .mp3
+.env
+separated/
+flask_session_cache/
+__pycache__
+static/uploads/
+migrations/
