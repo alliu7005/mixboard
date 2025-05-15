@@ -68,13 +68,20 @@
     <div class="result-card">
       <img src = "../static/uploads/vis.png" id="image">
       <button id="playButton">Play</button>
-      <audio id="audioPlayer" src="../static/uploads/mashup.wav"></audio>
+      <audio id="audioPlayer" controls preload="auto"></audio>
     </div>
     
 
     <script>
         const playButton = document.getElementById('playButton');
         const audioPlayer = document.getElementById('audioPlayer');
+
+        window.addEventListener('load', () => {
+          const file = '../static/uploads/mashup.wav';
+          const bust = '?cb=' + Date.now();
+          audioPlayer.src = file + bust;
+          audioPlayer.load();
+        })
 
       // Add click event listener on the button
         playButton.addEventListener('click', function() {

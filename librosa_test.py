@@ -5,6 +5,8 @@ import librosa.display
 from pydub import AudioSegment
 import numpy as np
 from BeatNet.BeatNet import BeatNet
+from madmom.features.beats import DBNBeatTrackingProcessor, RNNBeatProcessor
+from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
 from madmom.features.chords import DeepChromaChordRecognitionProcessor, majmin_targets_to_chord_labels
 from madmom.audio.chroma import DeepChromaProcessor
 from madmom.evaluation.chords import encode as encode_chords, merge_chords, reduce_to_triads
@@ -86,9 +88,7 @@ def plot_tonal_centroids(tonnetz, name, bounds = None):
 
 #load files
 #songName = "song1/vocals.mp3"
-#songName2 = "song2/drums.mp3"
 #orig_song = "song1/popsong.mp3"
-bound_amt = 4
 
 #audio = AudioSegment.from_mp3(songName)
 #audio2 = AudioSegment.from_mp3(songName2)
@@ -108,12 +108,37 @@ def get_tempo(beats):
     #print(tempo)
     return tempo
 
-def get_beats_and_downbeats(y):
+def get_beats_and_downbeats(y, sr):
+
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    #beat_tracker = BeatNet(1, mode="online", inference_model="PF", thread=False)
+    #beats_np = beat_tracker.process(y)
+    #print(beats_np)
+    print(tempo)
+    sf.write("test.wav",y,sr)
+    act = RNNDownBeatProcessor()("test.wav")
+
+    dbn = DBNDownBeatTrackingProcessor(beats_per_bar=4, fps=100, min_bpm = tempo * 0.85, max_bpm = tempo * 1.15)
+
+    downbeats = dbn(act)
+
+    
+    beats = np.array([time for time, beat in downbeats])
+    downbeats = np.array([time for time, beat in downbeats if beat == 1])
+    print(60/np.mean(np.diff(beats)))
+    os.remove("test.wav")
+    #print(beats_fixed)
+    #return beats
+    return (beats, downbeats)
+
+def get_beats_and_downbeats_beatnet(y, sr):
     beat_tracker = BeatNet(1, mode="offline", inference_model="DBN", thread=False)
     beats_np = beat_tracker.process(y)
-    downbeats = np.array([time for time, beat in beats_np if beat == 1])
     beats = np.array([time for time, beat in beats_np])
+    downbeats = np.array([time for time, beat in beats_np if beat == 1])
+    print(60/np.mean(np.diff(beats)))
     return (beats, downbeats)
+
 
 
 #def get_downbeats(y, beats):
@@ -312,15 +337,14 @@ def find_silence(y, frame_length):
     y_db = librosa.amplitude_to_db(np.abs(y))
     mean_db = -np.mean(y_db)
     min_db = -np.min(y_db)
+    max_db = -np.max(y_db)
     #print(min_db - mean_db)
     top_db = (min_db - mean_db)/100 * min_db
-    #print(top_db)
-    #if mean_db > 50:
-    #    top_db = 0
+    #   top_db = 0
 
     non_silent = librosa.effects.split(y, top_db = top_db, frame_length=frame_length, hop_length=int(frame_length/2))
     silent = []
-    if len(non_silent) == 0:
+    if len(non_silent) == 0 or max_db > 40:
         silent.append([0, len(y)-1])
     else:
         if non_silent[0][0] != 0:
@@ -356,7 +380,7 @@ def find_silent_downbeat_ranges(sr, silence, downbeats):
 
 def find_key(y,sr):
     y_harmonic = librosa.effects.harmonic(y=y)
-    chroma = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr, bins_per_octave=24)
+    chroma = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr, bins_per_octave=12)
     pitch_activations = []
 
     for i in range(12):
@@ -410,7 +434,6 @@ def find_key(y,sr):
     if "minor" in bestkey:
         for key in min_key_dict.keys():
             if min_key_dict[key] == bestcorr:
-                key_index = (key_index + 3) % 12
                 break
             key_index += 1
     else:
@@ -428,6 +451,13 @@ def find_key(y,sr):
 
 def shift_pitch(y, sr, key_y, key2):
     n_steps = key2 - key_y
+    if n_steps > 6:
+        n_steps = -12 + n_steps
+    elif n_steps < -6:
+        n_steps = 12 + n_steps
+    #print(n_steps)
+    if key_y == key2:
+        return y
     return librosa.effects.pitch_shift(y=y, sr=sr, n_steps=n_steps)
 
 def extract_chords(y, sr, fps=10):
@@ -442,7 +472,6 @@ def extract_chords(y, sr, fps=10):
     #hop_len = dcp.processors[1].hop_size
 
     targets = decoder(chroma)
-
     ann = encode_chords(targets)
     ann = merge_chords(ann)
     reduced = reduce_to_triads(ann["chord"])
@@ -452,34 +481,9 @@ def extract_chords(y, sr, fps=10):
     out["start"] = ann["start"] 
     out["end"] = ann["end"] 
     out["chord"] = reduced
+
+    os.remove("temp1.wav")
     return out
-
-def detect_closest_beat(timestamp, beats):
-
-    out = []
-    #print(beats)
-    #print(len(timestamp))
-    for i in range(len(timestamp)):
-        
-        if i == 0:
-            out.append(0)
-        elif i == len(timestamp)-1:
-            l = np.argwhere(beats < timestamp[i])[-1][0]
-            out.append(l)
-        else:
-            #print(i)
-            ge = np.argwhere(beats >= timestamp[i])[0][0]
-            l = np.argwhere(beats < timestamp[i])[-1][0]
-            #print(timestamp[i], beats[ge], beats[l])
-            diff1 = abs(timestamp[i] - beats[ge])
-            diff2 = abs(timestamp[i] - beats[l])
-
-            if diff1 < diff2:
-                out.append(ge)
-            else:
-                out.append(l)
-
-    return np.array(out)
 
 def chord_matrix(ann, fps=10):
     T = int(np.ceil(ann['end'][-1] * fps))
@@ -491,12 +495,7 @@ def chord_matrix(ann, fps=10):
         M[r, t0:t1] = 1.0
     return M
 
-def chord_similarity(y1, y2, sr, fps=10):
-    ann = extract_chords(y1, sr, fps=fps)
-    ann2 = extract_chords(y2, sr, fps=fps)
-    M1 = chord_matrix(ann, fps=fps)
-    M2 = chord_matrix(ann2, fps=fps)
-
+def chord_similarity(M1, M2, fps=10):
     F1 = M1.T
     F2 = M2.T
 

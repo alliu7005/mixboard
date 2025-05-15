@@ -1,9 +1,33 @@
-from flask_sqlalchemy import SQLAlchemy
+from flask_sqlalchemy import SQLAlchemy as _BaseSQLAlchemy
 from song_struct import Song_Struct, Stem
 import numpy as np
+from sqlalchemy.dialects.postgresql import ARRAY, DOUBLE_PRECISION, JSONB
+from sqlalchemy.types import TypeDecorator, LargeBinary
+import gzip, pickle
 
+class SQLAlchemy(_BaseSQLAlchemy):
+    def apply_pool_defaults(self, app, options):
+        super(SQLAlchemy, self).apply_pool_defaults(self, app, options)
+        options["pool_pre_ping"] = True
 
 db = SQLAlchemy()
+
+
+class CompressedNDArray(TypeDecorator):
+    impl = LargeBinary
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        arr = np.asarray(value)
+        raw = pickle.dumps(arr, protocol=pickle.HIGHEST_PROTOCOL)
+        return gzip.compress(raw)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        raw = gzip.decompress(value)
+        return pickle.loads(raw)
 
 class SongModel(db.Model):
     __tablename__ = 'songs'
@@ -15,9 +39,9 @@ class SongModel(db.Model):
     key = db.Column(db.Integer)
     major = db.Column(db.Integer)
     bounds = db.Column(db.JSON)
-    downbeats = db.Column(db.PickleType)
-    beats = db.Column(db.PickleType)
-    y = db.Column(db.PickleType)
+    downbeats = db.Column(CompressedNDArray, nullable=False)
+    beats = db.Column(CompressedNDArray, nullable=False)
+    y = db.Column(CompressedNDArray, nullable=False)
     stems = db.relationship("StemModel", back_populates="song", cascade="all, delete-orphan")
 
 class StemModel(db.Model):
@@ -32,34 +56,33 @@ class StemModel(db.Model):
     key = db.Column(db.Integer)
     major = db.Column(db.Integer)
     bounds = db.Column(db.JSON)
-    downbeats = db.Column(db.PickleType)
-    beats = db.Column(db.PickleType)
-    y = db.Column(db.PickleType)
-    silent = db.Column(db.PickleType)
-    active = db.Column(db.PickleType)
-    chroma = db.Column(db.PickleType)
-    mfcc = db.Column(db.PickleType)
-    stft = db.Column(db.PickleType)
-    rms = db.Column(db.PickleType)
-    tonnetz = db.Column(db.PickleType)
-    specgram = db.Column(db.PickleType)
+    downbeats = db.Column(CompressedNDArray, nullable=False)
+    beats = db.Column(CompressedNDArray, nullable=False)
+    y = db.Column(CompressedNDArray, nullable=False)
+    silent = db.Column(CompressedNDArray, nullable=False)
+    active = db.Column(CompressedNDArray, nullable=False)
+    specgram = db.Column(JSONB, nullable=False)
+    cluster = db.Column(db.Integer)
     song = db.relationship("SongModel", back_populates="stems")
+    
 
 class GraphModel(db.Model):
     __tablename__ = 'graph'
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String)
+    kmeans = db.Column(db.PickleType)
     data = db.Column(db.PickleType)
 
 def graph_from_orm(orm):
     data = orm.data
-    return data
+    kmeans = orm.kmeans
+    return {"data": data, "kmeans": kmeans}
 
 def song_from_orm(orm):
     name = orm.name
     sr = orm.sr
-    orig_y = orm.y
+    orig_y = np.array(orm.y)
     tempo = orm.tempo
     key = orm.key
     major = orm.major
@@ -69,25 +92,25 @@ def song_from_orm(orm):
     stems = orm.stems
     for stem in stems:
         if stem.name == "vocals":
-            v_y = stem.y
+            v_y = np.array(stem.y)
         elif stem.name == "other":
-            o_y = stem.y
+            o_y = np.array(stem.y)
         elif stem.name == "bass":
-            b_y = stem.y
+            b_y = np.array(stem.y)
         else:
-            d_y = stem.y
+            d_y = np.array(stem.y)
 
     song = Song_Struct(orig_y, sr, name, v_y=v_y, o_y=o_y, b_y=b_y, d_y=d_y, tempo=tempo, key=key, major=major, bounds=bounds, downbeats=downbeats, beats=beats, take_fields=False)
 
     for i in range(len(song.stems)):
-        song.stems[i].active = stems[i].active
-        song.stems[i].silence = stems[i].silent
-        song.stems[i].chroma = stems[i].chroma
-        song.stems[i].rms = stems[i].rms
-        song.stems[i].tonnetz = stems[i].tonnetz
-        song.stems[i].specgram = stems[i].specgram
-        song.stems[i].mfcc = stems[i].mfcc
-        song.stems[i].stft = stems[i].stft
+        song.stems[i].active = np.array(stems[i].active)
+        song.stems[i].silence = np.array(stems[i].silent)
+        song.stems[i].chroma = np.array(stems[i].chroma)
+        song.stems[i].rms = np.array(stems[i].rms)
+        song.stems[i].tonnetz = np.array(stems[i].tonnetz)
+        song.stems[i].specgram = np.array(stems[i].specgram)
+        song.stems[i].mfcc = np.array(stems[i].mfcc)
+        song.stems[i].stft = np.array(stems[i].stft)
 
     return song
 
@@ -100,16 +123,17 @@ def stem_from_orm(orm):
     key = orm.key
     major = orm.major
     bounds = orm.bounds
-    downbeats = orm.downbeats
-    beats = orm.beats
-    silence = orm.silent
-    active = orm.active
-    chroma = orm.chroma
-    stft = orm.stft
-    rms = orm.rms
-    tonnetz = orm.tonnetz
-    mfcc = orm.mfcc
-    specgram = orm.specgram
+    downbeats = np.array(orm.downbeats)
+    beats = np.array(orm.beats)
+    silence = np.array(orm.silent)
+    active = np.array(orm.active)
+    chroma = np.array(orm.chroma)
+    stft = np.array(orm.stft)
+    rms = np.array(orm.rms)
+    tonnetz = np.array(orm.tonnetz)
+    mfcc = np.array(orm.mfcc)
+    specgram = [np.array(s) for s in orm.specgram]
+    cluster=np.array(orm.cluster)
     
     stem = Stem(
         init_song=init_song,
@@ -131,4 +155,5 @@ def stem_from_orm(orm):
         mfcc = mfcc,
         specgram = specgram
     )
+    stem.cluster=cluster
     return stem

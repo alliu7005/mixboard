@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 from werkzeug.utils import secure_filename
-from flask_session import Session
+from flask_session.__init__ import Session
 import pickle
 import os
 import librosa_test
@@ -21,6 +21,7 @@ from graph import init_graph, add_song_to_graph
 app = Flask(__name__)
 UPLOAD_FOLDER = "static/uploads/"
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config["SESSION_FILE_DIR"] = "./flask_session_cache"
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mydatabase.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SESSION_PERMANENT'] = False
@@ -48,11 +49,14 @@ def index():
         other_bass = GraphModel.query.filter_by(name="other_bass").all()[0]
         vocal_drums = GraphModel.query.filter_by(name="vocal_drums").all()[0]
 
-        vocal_other_graph = [t for t in graph_from_orm(vocal_other) if t[0]==song.name and t[1]!=song.name]
-        vocal_drums_graph = [t for t in graph_from_orm(vocal_drums) if t[0]==song.name and t[1]!=song.name]
+        #print(graph_from_orm(vocal_drums)["data"])
+
+        vocal_other_graph = [t for t in graph_from_orm(vocal_other)["data"] if t[0]==song.name and t[1]!=song.name]
+        vocal_drums_graph = [t for t in graph_from_orm(vocal_drums)["data"] if t[0]==song.name and t[1]!=song.name]
 
         vocal_other_graph = sorted(vocal_other_graph, key=lambda x: x[2], reverse=True)
         vocal_drums_graph = sorted(vocal_drums_graph, key=lambda x: x[2], reverse=True)
+        print(vocal_drums_graph[0])
 
         other_name = vocal_other_graph[0][1]
         drums_name = vocal_drums_graph[0][1]
@@ -63,7 +67,7 @@ def index():
         drums_stem = stem_from_orm(drums_orm)
         #print(graph_from_orm(other_bass), other_name, song.name)
 
-        other_bass_graph = [t for t in graph_from_orm(other_bass) if t[0]==other_name and t[1]!=other_name]
+        other_bass_graph = [t for t in graph_from_orm(other_bass)["data"] if t[0]==other_name and t[1]!=other_name]
 
         other_bass_graph = sorted(other_bass_graph, key=lambda x: x[2], reverse=True)
 
@@ -75,8 +79,8 @@ def index():
         mashup = Mashup(song, stem, other_stem, bass_stem, drums_stem)
 
         session["mashup"] = pickle.dumps(mashup)
-        mashup.visualize(app.config['UPLOAD_FOLDER'])
         mashup.play(app.config['UPLOAD_FOLDER'])
+        mashup.visualize(app.config['UPLOAD_FOLDER'])
 
         
         #saves session variables for song file name
@@ -87,7 +91,7 @@ def index():
         return redirect(url_for('res'))
         
     else:
-        init_graph(db.session)
+        #init_graph(db.session)
         orm_stems = StemModel.query.filter_by(name="vocals").all()
         return render_template('index.html', stems=orm_stems)
 
@@ -184,7 +188,8 @@ def store_song_from_dict(song_dict, stems, dbsession):
             stft = stem_dict["stft"],
             rms = stem_dict["rms"],
             tonnetz = stem_dict["tonnetz"],
-            specgram = stem_dict["specgram"])
+            specgram = stem_dict["specgram"],
+            cluster=stem_dict["cluster"])
 
         song_model.stems.append(stem_model)
     
@@ -192,11 +197,6 @@ def store_song_from_dict(song_dict, stems, dbsession):
     dbsession.commit()
     print("stored song", song_model.name)
 
-
-
-
-
 if __name__ == '__main__':
-    
     app.run()
     
