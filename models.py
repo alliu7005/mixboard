@@ -28,6 +28,21 @@ class CompressedNDArray(TypeDecorator):
             return None
         raw = gzip.decompress(value)
         return pickle.loads(raw)
+    
+class CompressedPickle(TypeDecorator):
+    impl = LargeBinary
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        raw = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        return gzip.compress(raw)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        raw = gzip.decompress(value)
+        return pickle.loads(raw)
 
 class SongModel(db.Model):
     __tablename__ = 'songs'
@@ -61,7 +76,7 @@ class StemModel(db.Model):
     y = db.Column(CompressedNDArray, nullable=False)
     silent = db.Column(CompressedNDArray, nullable=False)
     active = db.Column(CompressedNDArray, nullable=False)
-    specgram = db.Column(JSONB, nullable=False)
+    specgram = db.Column(CompressedPickle, nullable=False)
     cluster = db.Column(db.Integer)
     song = db.relationship("SongModel", back_populates="stems")
     
@@ -105,12 +120,7 @@ def song_from_orm(orm):
     for i in range(len(song.stems)):
         song.stems[i].active = np.array(stems[i].active)
         song.stems[i].silence = np.array(stems[i].silent)
-        song.stems[i].chroma = np.array(stems[i].chroma)
-        song.stems[i].rms = np.array(stems[i].rms)
-        song.stems[i].tonnetz = np.array(stems[i].tonnetz)
-        song.stems[i].specgram = np.array(stems[i].specgram)
-        song.stems[i].mfcc = np.array(stems[i].mfcc)
-        song.stems[i].stft = np.array(stems[i].stft)
+        song.stems[i].specgram = stems[i].specgram
 
     return song
 
@@ -127,11 +137,6 @@ def stem_from_orm(orm):
     beats = np.array(orm.beats)
     silence = np.array(orm.silent)
     active = np.array(orm.active)
-    chroma = np.array(orm.chroma)
-    stft = np.array(orm.stft)
-    rms = np.array(orm.rms)
-    tonnetz = np.array(orm.tonnetz)
-    mfcc = np.array(orm.mfcc)
     specgram = [np.array(s) for s in orm.specgram]
     cluster=np.array(orm.cluster)
     
@@ -148,11 +153,6 @@ def stem_from_orm(orm):
         beats=beats,
         silence = silence,
         active = active,
-        chroma = chroma,
-        stft = stft,
-        rms = rms,
-        tonnetz = tonnetz,
-        mfcc = mfcc,
         specgram = specgram
     )
     stem.cluster=cluster

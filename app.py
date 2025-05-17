@@ -16,19 +16,21 @@ import librosa
 from song_struct import Song_Struct, Stem, Mashup
 from models import db, SongModel, StemModel, GraphModel, song_from_orm, stem_from_orm, graph_from_orm
 from graph import init_graph, add_song_to_graph
+from flask_migrate import Migrate
 
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "static/uploads/"
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config["SESSION_FILE_DIR"] = "./flask_session_cache"
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mydatabase.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SESSION_PERMANENT'] = False
 app.config['SESSION_TYPE'] = "filesystem"
 Session(app)
 
 db.init_app(app)
+Migrate(app, db)
 
 with app.app_context():
     db.create_all()
@@ -183,11 +185,6 @@ def store_song_from_dict(song_dict, stems, dbsession):
             y = stem_dict["y"],
             silent = stem_dict["silent"],
             active = stem_dict["active"],
-            chroma = stem_dict["chroma"],
-            mfcc = stem_dict["mfcc"],
-            stft = stem_dict["stft"],
-            rms = stem_dict["rms"],
-            tonnetz = stem_dict["tonnetz"],
             specgram = stem_dict["specgram"],
             cluster=stem_dict["cluster"])
 
