@@ -30,7 +30,7 @@ class Song_Struct:
         self.sr = sr
 
         if v_y is None or o_y is None or b_y is None or d_y is None:
-            separator = demucs.api.Separator(model="htdemucs")
+            separator = demucs.api.Separator(model="htdemucs_ft")
             separator.update_parameter(progress=True)
             self.orig_y = librosa.resample(self.orig_y, orig_sr=self.sr, target_sr = separator.samplerate)
             self.sr = separator.samplerate
@@ -609,7 +609,7 @@ class Mashup:
 
     def set_keys(self):
         for stem in self.stems:
-            if stem.key != self.key:
+            if stem.key != self.key and stem.name != "drums":
                 stem.set_key(self.key)
 
     def set_silence(self):
@@ -686,6 +686,11 @@ class Mashup:
         self.other.y = np.clip(pyln.normalize.loudness(self.other.y, o_loudness, target), -1.0, 1.0)
         self.bass.y = np.clip(pyln.normalize.loudness(self.bass.y, b_loudness, -12.0), -1.0, 1.0)
         self.drums.y = np.clip(pyln.normalize.loudness(self.drums.y, d_loudness, target), -1.0, 1.0)
+
+    def gain_stage(self):
+        peak = np.max(np.abs(self.drums.y))
+        self.drums.y *= (10**(-6/20)) / (peak + 1e-6)
+        self.drums.y = np.tanh(self.drums.y * 1.1) / 1.1
 
     def match_rms(self):
         print("matching rms")
@@ -771,8 +776,11 @@ class Mashup:
     
     def auto_mix(self):
         #sf.write("other2.wav", self.other.y, self.sr, subtype='PCM_16')
+        #sf.write("other2.wav", self.other.y, self.sr, subtype='PCM_16')
+        #sf.write("bass2.wav", self.bass.y, self.sr, subtype='PCM_16')
         self.norm_loudness(target=-14.0)
         self.match_rms()
+        self.gain_stage()
         self.noise_gate(threshold=0.02, attack=0.005, release=0.1)
         self.hp_filter()
         self.lp_filter()

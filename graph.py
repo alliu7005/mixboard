@@ -167,7 +167,7 @@ def init_graph(dbsession):
     other_bass_graph = []
     vocal_drums_graph = []
 
-    kmeans = cluster_stems(dbsession, songs_orm, songs, 2)
+    kmeans = cluster_stems(dbsession, songs_orm, songs, 1)
 
     print("building graph")
     for song_orm, song_ext in zip(songs_orm, songs):
